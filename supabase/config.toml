@@ -1,0 +1,7 @@
+# `supabase link` complète ce fichier (project_id notamment).
+project_id = "contrats-paie"
+
+[functions.notify-depot]
+# L'appelant est un trigger de base de données, pas un utilisateur connecté :
+# la fonction vérifie elle-même le secret partagé.
+verify_jwt = false
