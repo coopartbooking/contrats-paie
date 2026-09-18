@@ -18,6 +18,9 @@ async function appliquer(s) {
   pret.value = true
 }
 
+// Une adresse inconnue ne doit pas être distinguable d'une adresse autorisée.
+const SILENCIEUX = /signups? not allowed|user not found|invalid login/i
+
 export function useAuth() {
   if (!amorce) {
     amorce = true
@@ -25,13 +28,31 @@ export function useAuth() {
     supabase.auth.onAuthStateChange((_, s) => appliquer(s))
   }
 
+  // shouldCreateUser: false — aucun compte n'est créé à la demande. Les gestionnaires
+  // sont ajoutés depuis le dashboard Supabase, puis dans la table `managers`.
+  async function demanderLien(adresse) {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: String(adresse).trim(),
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: `${location.origin}${location.pathname}#/gestion/connexion`,
+      },
+    })
+    if (error && !SILENCIEUX.test(error.message)) throw new Error(error.message)
+  }
+
+  // Le gabarit d'e-mail renvoie token_hash dans le fragment : pas de jeton d'accès
+  // dans l'URL, pas de collision avec le router, et le lien fonctionne depuis
+  // n'importe quel navigateur.
+  async function validerLien(token_hash, type = 'magiclink') {
+    const { error } = await supabase.auth.verifyOtp({ token_hash, type })
+    if (error) throw new Error(error.message)
+  }
+
   return {
     session, gestionnaire, pret,
     email: computed(() => session.value?.user?.email ?? ''),
-    connexionGoogle: () => supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: location.origin + location.pathname },
-    }),
+    demanderLien, validerLien,
     deconnexion: () => supabase.auth.signOut(),
   }
 }
