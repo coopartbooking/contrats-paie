@@ -35,7 +35,9 @@ export function useAuth() {
       email: String(adresse).trim(),
       options: {
         shouldCreateUser: false,
-        emailRedirectTo: `${location.origin}${location.pathname}#/gestion/connexion`,
+        // Sans fragment : le gabarit par défaut y place lui-même le jeton,
+        // et pre-auth.js remet la route en place au chargement.
+        emailRedirectTo: `${location.origin}${location.pathname}`,
       },
     })
     if (error && !SILENCIEUX.test(error.message)) throw new Error(error.message)
@@ -49,8 +51,14 @@ export function useAuth() {
     if (error) throw new Error(error.message)
   }
 
+  // Retour du gabarit par défaut : les jetons arrivent déjà émis.
+  async function ouvrirSession({ access_token, refresh_token }) {
+    const { error } = await supabase.auth.setSession({ access_token, refresh_token })
+    if (error) throw new Error(error.message)
+  }
+
   return {
-    session, gestionnaire, pret,
+    session, gestionnaire, pret, ouvrirSession,
     email: computed(() => session.value?.user?.email ?? ''),
     demanderLien, validerLien,
     deconnexion: () => supabase.auth.signOut(),

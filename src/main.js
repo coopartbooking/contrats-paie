@@ -1,3 +1,4 @@
+import './lib/pre-auth'   // doit rester le premier import
 import { createApp } from 'vue'
 import App from './App.vue'
 import { router } from './router'

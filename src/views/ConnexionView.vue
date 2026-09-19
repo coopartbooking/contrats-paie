@@ -2,11 +2,13 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
+import { retourAuth } from '../lib/pre-auth'
 
 const router = useRouter()
 const route = useRoute()
 const {
-  session, gestionnaire, pret, email, demanderLien, validerLien, deconnexion,
+  session, gestionnaire, pret, email,
+  demanderLien, validerLien, ouvrirSession, deconnexion,
 } = useAuth()
 
 const adresse = ref('')
@@ -18,11 +20,24 @@ const erreur = ref('')
 const suite = () => (route.query.suite ? { suite: String(route.query.suite) } : {})
 
 onMounted(async () => {
+  if (retourAuth.erreur) {
+    erreur.value = 'Ce lien a expiré ou a déjà servi. Demandez-en un nouveau.'
+    retourAuth.erreur = null
+    return
+  }
+
   const jeton = route.query.token_hash
-  if (!jeton) return
+  if (!retourAuth.access_token && !jeton) return
+
   validation.value = true
   try {
-    await validerLien(String(jeton), String(route.query.type || 'magiclink'))
+    if (retourAuth.access_token) {
+      await ouvrirSession(retourAuth)
+      retourAuth.access_token = null
+      retourAuth.refresh_token = null
+    } else {
+      await validerLien(String(jeton), String(route.query.type || 'magiclink'))
+    }
   } catch (e) {
     erreur.value = 'Ce lien a expiré ou a déjà servi. Demandez-en un nouveau.'
   } finally {
