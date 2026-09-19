@@ -13,6 +13,10 @@ const routes = [
     component: () => import('./views/DemandesView.vue'),
   },
   {
+    path: '/gestion/equipe', name: 'equipe', meta: { gestion: true },
+    component: () => import('./views/EquipeView.vue'),
+  },
+  {
     path: '/gestion/:id', name: 'demande', meta: { gestion: true },
     component: () => import('./views/DemandeView.vue'),
   },

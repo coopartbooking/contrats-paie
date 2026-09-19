@@ -5,3 +5,8 @@ project_id = "contrats-paie"
 # L'appelant est un trigger de base de données, pas un utilisateur connecté :
 # la fonction vérifie elle-même le secret partagé.
 verify_jwt = false
+
+[functions.gestionnaires]
+# Appelée depuis l'interface par un gestionnaire connecté : le JWT est vérifié
+# par la plateforme, et la fonction contrôle ensuite le statut d'administrateur.
+verify_jwt = true

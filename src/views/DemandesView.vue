@@ -33,6 +33,7 @@ async function exporter() {
     <header class="entete-gestion">
       <h1>Demandes reçues</h1>
       <span class="compte">
+        <router-link to="/gestion/equipe" class="lien">Équipe</router-link> ·
         {{ email }} · <button class="lien" @click="deconnexion">déconnexion</button>
       </span>
     </header>
@@ -53,7 +54,9 @@ async function exporter() {
     <p v-if="chargement">Chargement…</p>
 
     <p v-else-if="!demandes.length" class="attente">
-      Aucune demande ne correspond{{ filtre.q || filtre.statut ? ' à ces critères' : '' }}.
+      {{ filtre.q || filtre.statut
+        ? 'Aucune demande ne correspond à ces critères.'
+        : 'Aucune demande pour le moment.' }}
     </p>
 
     <div v-else class="tableau">

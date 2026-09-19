@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 
 const session = ref(null)
 const gestionnaire = ref(null)   // null = pas encore vérifié
+const administrateur = ref(false)
 const pret = ref(false)
 let amorce = false
 
@@ -10,10 +11,12 @@ async function appliquer(s) {
   session.value = s
   if (!s) {
     gestionnaire.value = null
+    administrateur.value = false
   } else {
     const { data } = await supabase
-      .from('managers').select('user_id').eq('user_id', s.user.id).maybeSingle()
+      .from('managers').select('user_id, admin').eq('user_id', s.user.id).maybeSingle()
     gestionnaire.value = !!data
+    administrateur.value = !!data?.admin
   }
   pret.value = true
 }
@@ -79,7 +82,7 @@ export function useAuth() {
   }
 
   return {
-    session, gestionnaire, pret, ouvrirSession,
+    session, gestionnaire, administrateur, pret, ouvrirSession,
     email: computed(() => session.value?.user?.email ?? ''),
     demanderLien, validerLien,
     connexionMotDePasse, demanderReinitialisation, definirMotDePasse,

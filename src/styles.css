@@ -194,3 +194,11 @@ tbody tr:last-child td { border-bottom: none; }
 @media (max-width: 34rem) {
   dl > div { grid-template-columns: 1fr; gap: 0; }
 }
+
+/* --- équipe --- */
+.identifiants { border-color: var(--accent); }
+.actions { display: flex; flex-wrap: wrap; gap: .8rem; }
+.actions .lien { font-size: .85rem; }
+.lien.danger { color: var(--danger); }
+.lien:disabled { opacity: .5; cursor: default; }
+.badge.ok { background: var(--accent-doux); color: var(--accent); }
