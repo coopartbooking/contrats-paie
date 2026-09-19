@@ -6,7 +6,7 @@
 
 const CIBLE = '#/gestion/connexion'
 
-export const retourAuth = { access_token: null, refresh_token: null, erreur: null }
+export const retourAuth = { access_token: null, refresh_token: null, type: null, erreur: null }
 
 const fragment = new URLSearchParams(location.hash.replace(/^#\/?/, ''))
 const requete = new URLSearchParams(location.search)
@@ -14,6 +14,7 @@ const requete = new URLSearchParams(location.search)
 if (fragment.has('access_token') || fragment.has('error_description') || fragment.has('error')) {
   retourAuth.access_token = fragment.get('access_token')
   retourAuth.refresh_token = fragment.get('refresh_token')
+  retourAuth.type = fragment.get('type')
   retourAuth.erreur = fragment.get('error_description') || fragment.get('error')
   history.replaceState(null, '', location.pathname + location.search + CIBLE)
 } else if (requete.has('code') && !location.hash.startsWith('#/')) {

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { retourAuth } from '../lib/pre-auth'
@@ -8,16 +8,27 @@ const router = useRouter()
 const route = useRoute()
 const {
   session, gestionnaire, pret, email,
-  demanderLien, validerLien, ouvrirSession, deconnexion,
+  validerLien, ouvrirSession, deconnexion,
+  connexionMotDePasse, demanderReinitialisation, definirMotDePasse,
 } = useAuth()
 
+// 'connexion' | 'oubli' | 'nouveau'
+const mode = ref('connexion')
+
 const adresse = ref('')
-const envoi = ref(false)
-const envoye = ref(false)
+const motDePasse = ref('')
+const nouveau = ref('')
+const confirmation = ref('')
+
+const occupe = ref(false)
 const validation = ref(false)
 const erreur = ref('')
+const info = ref('')
 
 const suite = () => (route.query.suite ? { suite: String(route.query.suite) } : {})
+
+const mdpValide = computed(() =>
+  nouveau.value.length >= 10 && nouveau.value === confirmation.value)
 
 onMounted(async () => {
   if (retourAuth.erreur) {
@@ -29,15 +40,20 @@ onMounted(async () => {
   const jeton = route.query.token_hash
   if (!retourAuth.access_token && !jeton) return
 
+  const recuperation =
+    retourAuth.type === 'recovery' || route.query.type === 'recovery'
+
   validation.value = true
   try {
     if (retourAuth.access_token) {
       await ouvrirSession(retourAuth)
       retourAuth.access_token = null
       retourAuth.refresh_token = null
+      retourAuth.type = null
     } else {
       await validerLien(String(jeton), String(route.query.type || 'magiclink'))
     }
+    if (recuperation) mode.value = 'nouveau'
   } catch (e) {
     erreur.value = 'Ce lien a expiré ou a déjà servi. Demandez-en un nouveau.'
   } finally {
@@ -47,53 +63,107 @@ onMounted(async () => {
 })
 
 watch([session, gestionnaire], () => {
+  if (mode.value === 'nouveau') return
   if (session.value && gestionnaire.value) {
     router.replace(String(route.query.suite || '/gestion'))
   }
 })
 
-async function soumettre() {
+async function agir(action) {
   erreur.value = ''
-  envoi.value = true
+  info.value = ''
+  occupe.value = true
   try {
-    await demanderLien(adresse.value)
-    envoye.value = true
+    await action()
   } catch (e) {
     erreur.value = e.message
   } finally {
-    envoi.value = false
+    occupe.value = false
   }
 }
+
+const seConnecter = () => agir(() => connexionMotDePasse(adresse.value, motDePasse.value))
+
+const envoyerReinitialisation = () => agir(async () => {
+  await demanderReinitialisation(adresse.value)
+  info.value = 'Si cette adresse est autorisée, un lien de réinitialisation vient de partir.'
+})
+
+const enregistrerMotDePasse = () => agir(async () => {
+  await definirMotDePasse(nouveau.value)
+  mode.value = 'connexion'
+  info.value = 'Mot de passe enregistré.'
+  router.replace(String(route.query.suite || '/gestion'))
+})
 </script>
 
 <template>
   <main class="page etroite">
     <h1>Gestion des demandes</h1>
 
-    <p v-if="validation">Connexion en cours…</p>
+    <p v-if="validation">Vérification du lien…</p>
     <p v-else-if="!pret">Vérification de la session…</p>
 
-    <template v-else-if="!session">
-      <p>Réservé aux gestionnaires. Vous recevrez un lien de connexion par e-mail.</p>
+    <template v-else-if="mode === 'nouveau'">
+      <p>Choisissez un mot de passe. Dix caractères au minimum.</p>
+      <form @submit.prevent="enregistrerMotDePasse" novalidate>
+        <div class="champs">
+          <div class="champ">
+            <label for="nouveau">Nouveau mot de passe</label>
+            <input id="nouveau" v-model="nouveau" type="password" autocomplete="new-password" />
+          </div>
+          <div class="champ">
+            <label for="confirmation">Confirmation</label>
+            <input id="confirmation" v-model="confirmation" type="password" autocomplete="new-password" />
+          </div>
+        </div>
+        <p v-if="confirmation && nouveau !== confirmation" class="err">
+          Les deux saisies diffèrent.
+        </p>
+        <button type="submit" class="envoyer" :disabled="occupe || !mdpValide">
+          {{ occupe ? 'Enregistrement…' : 'Enregistrer' }}
+        </button>
+      </form>
+    </template>
 
-      <form v-if="!envoye" @submit.prevent="soumettre" novalidate>
+    <template v-else-if="mode === 'oubli' && !session">
+      <p>Indiquez votre adresse : vous recevrez un lien pour définir un nouveau mot de passe.</p>
+      <form @submit.prevent="envoyerReinitialisation" novalidate>
+        <div class="champs">
+          <div class="champ">
+            <label for="adresse-oubli">Adresse e-mail</label>
+            <input id="adresse-oubli" v-model="adresse" type="email" autocomplete="email" />
+          </div>
+        </div>
+        <button type="submit" class="envoyer" :disabled="occupe || !adresse">
+          {{ occupe ? 'Envoi…' : 'Envoyer le lien' }}
+        </button>
+      </form>
+      <p class="mention">
+        <button type="button" class="lien" @click="mode = 'connexion'">Revenir à la connexion</button>
+      </p>
+    </template>
+
+    <template v-else-if="!session">
+      <p>Réservé aux gestionnaires.</p>
+      <form @submit.prevent="seConnecter" novalidate>
         <div class="champs">
           <div class="champ">
             <label for="adresse">Adresse e-mail</label>
-            <input id="adresse" v-model="adresse" type="email" autocomplete="email" required />
+            <input id="adresse" v-model="adresse" type="email" autocomplete="email" />
+          </div>
+          <div class="champ">
+            <label for="mdp">Mot de passe</label>
+            <input id="mdp" v-model="motDePasse" type="password" autocomplete="current-password" />
           </div>
         </div>
-        <button type="submit" class="envoyer" :disabled="envoi || !adresse">
-          {{ envoi ? 'Envoi…' : 'Recevoir un lien de connexion' }}
+        <button type="submit" class="envoyer" :disabled="occupe || !adresse || !motDePasse">
+          {{ occupe ? 'Connexion…' : 'Se connecter' }}
         </button>
       </form>
-
-      <p v-else class="bandeau ok" role="status">
-        Si cette adresse est autorisée, un lien de connexion vient d'être envoyé.
-        Il est valable une heure et ne sert qu'une fois.
+      <p class="mention">
+        <button type="button" class="lien" @click="mode = 'oubli'">Mot de passe oublié ?</button>
       </p>
-
-      <p v-if="erreur" class="err bandeau" role="alert">{{ erreur }}</p>
     </template>
 
     <template v-else-if="gestionnaire === false">
@@ -105,5 +175,8 @@ async function soumettre() {
     </template>
 
     <p v-else>Connexion…</p>
+
+    <p v-if="info" class="bandeau ok" role="status">{{ info }}</p>
+    <p v-if="erreur" class="err bandeau" role="alert">{{ erreur }}</p>
   </main>
 </template>

@@ -51,6 +51,27 @@ export function useAuth() {
     if (error) throw new Error(error.message)
   }
 
+  async function connexionMotDePasse(adresse, motDePasse) {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: String(adresse).trim(),
+      password: motDePasse,
+    })
+    // Message unique : ne pas révéler si l'adresse existe.
+    if (error) throw new Error('Adresse ou mot de passe incorrect.')
+  }
+
+  async function demanderReinitialisation(adresse) {
+    const { error } = await supabase.auth.resetPasswordForEmail(String(adresse).trim(), {
+      redirectTo: `${location.origin}${location.pathname}`,
+    })
+    if (error && !SILENCIEUX.test(error.message)) throw new Error(error.message)
+  }
+
+  async function definirMotDePasse(motDePasse) {
+    const { error } = await supabase.auth.updateUser({ password: motDePasse })
+    if (error) throw new Error(error.message)
+  }
+
   // Retour du gabarit par défaut : les jetons arrivent déjà émis.
   async function ouvrirSession({ access_token, refresh_token }) {
     const { error } = await supabase.auth.setSession({ access_token, refresh_token })
@@ -61,6 +82,7 @@ export function useAuth() {
     session, gestionnaire, pret, ouvrirSession,
     email: computed(() => session.value?.user?.email ?? ''),
     demanderLien, validerLien,
+    connexionMotDePasse, demanderReinitialisation, definirMotDePasse,
     deconnexion: () => supabase.auth.signOut(),
   }
 }
