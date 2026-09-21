@@ -45,10 +45,17 @@ Deno.serve(async req => {
   if (error || !data) return new Response('Dépôt introuvable', { status: 404 })
   const depot = data as unknown as Depot
 
-  const { data: gestionnaires } = await admin.from('managers').select('email')
-  const adresses = (gestionnaires ?? []).map(g => g.email).filter(Boolean)
-  const secours = Deno.env.get('NOTIFY_FALLBACK')
-  const destGestion = adresses.length ? adresses : (secours ? [secours] : [])
+  // Priorité à la boîte partagée du service paie ; à défaut, les gestionnaires.
+  const fixes = (Deno.env.get('NOTIFY_TO') ?? '')
+    .split(',').map(a => a.trim()).filter(Boolean)
+
+  let destGestion = fixes
+  if (!destGestion.length) {
+    const { data: gestionnaires } = await admin.from('managers').select('email')
+    const adresses = (gestionnaires ?? []).map(g => g.email).filter(Boolean)
+    const secours = Deno.env.get('NOTIFY_FALLBACK')
+    destGestion = adresses.length ? adresses : (secours ? [secours] : [])
+  }
 
   const lienGestion = `${BASE}#/gestion/${submission_id}`
   const lienRelecture = `${BASE}#/relecture?t=${depot.edit_token}`
