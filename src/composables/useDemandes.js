@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 
 const CHAMPS_LISTE = `
   id, reference, compagnie, contact_nom, contact_email, statut, revision,
-  created_at, traitee_at, paie_purgee_at, contracts(count)
+  created_at, traitee_at, paie_purgee_at, contrats:contracts(date_debut)
 `
 
 export function useDemandes() {
@@ -29,7 +29,10 @@ export function useDemandes() {
     )
     chargement.value = false
     if (error) { erreur.value = error.message; return }
-    demandes.value = (data ?? []).map(d => ({ ...d, nb_salaries: d.contracts?.[0]?.count ?? 0 }))
+    demandes.value = (data ?? []).map(d => {
+      const dates = (d.contrats ?? []).map(c => c.date_debut).filter(Boolean).sort()
+      return { ...d, nb_salaries: d.contrats?.length ?? 0, debut: dates[0] ?? null }
+    })
   }
 
   async function lignesExport() {

@@ -202,3 +202,12 @@ tbody tr:last-child td { border-bottom: none; }
 .lien.danger { color: var(--danger); }
 .lien:disabled { opacity: .5; cursor: default; }
 .badge.ok { background: var(--accent-doux); color: var(--accent); }
+
+/* --- urgence --- */
+.bandeau.urgent { border: 1px solid var(--danger); background: var(--danger-doux);
+  color: var(--danger); font-weight: 500; }
+.delai { font-size: .78rem; color: var(--gris); }
+.delai.alerte { color: #8a6100; font-weight: 600; }
+.delai.critique { color: var(--danger); font-weight: 600; }
+tr.ligne-critique td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+tr.ligne-alerte td:first-child { box-shadow: inset 3px 0 0 #c99a2e; }

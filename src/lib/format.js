@@ -9,3 +9,14 @@ export const masque = v => {
   const s = String(v || '').replace(/\s/g, '')
   return s ? '•••• ' + s.slice(-4) : '—'
 }
+
+// Nombre de jours entre aujourd'hui (minuit, heure locale) et une date ISO.
+// Négatif si la date est passée.
+export function joursAvant(iso) {
+  if (!iso) return null
+  const [a, m, j] = String(iso).slice(0, 10).split('-').map(Number)
+  const cible = new Date(a, m - 1, j)
+  const auj = new Date()
+  auj.setHours(0, 0, 0, 0)
+  return Math.round((cible - auj) / 86400000)
+}

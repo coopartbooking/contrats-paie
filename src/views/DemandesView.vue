@@ -1,13 +1,19 @@
 <script setup>
-import { onMounted, watch } from 'vue'
+import { onMounted, watch, ref, computed } from 'vue'
 import { useDemandes } from '../composables/useDemandes'
 import { useAuth } from '../composables/useAuth'
 import { versCsv, telecharger } from '../lib/csv'
-import { jour } from '../lib/format'
+import { jour, joursAvant } from '../lib/format'
 import StatusBadge from '../components/ui/StatusBadge.vue'
+
+// Seuils d'affichage, en jours avant la première prise de poste du dépôt.
+const SEUIL_CRITIQUE = 3
+const SEUIL_ALERTE = 7
 
 const { demandes, chargement, erreur, filtre, charger, lignesExport } = useDemandes()
 const { email, deconnexion } = useAuth()
+
+const tri = ref('urgence')
 
 onMounted(charger)
 watch(() => filtre.statut, charger)
@@ -17,6 +23,38 @@ watch(() => filtre.q, () => {
   clearTimeout(minuteur)
   minuteur = setTimeout(charger, 250)
 })
+
+function urgence(d) {
+  if (d.statut === 'traitee' || d.debut == null) return ''
+  const j = joursAvant(d.debut)
+  if (j <= SEUIL_CRITIQUE) return 'critique'
+  if (j <= SEUIL_ALERTE) return 'alerte'
+  return ''
+}
+
+function delai(d) {
+  const j = joursAvant(d.debut)
+  if (j == null) return ''
+  if (j < -1) return `commencé il y a ${-j} j`
+  if (j === -1) return 'commencé hier'
+  if (j === 0) return "aujourd'hui"
+  if (j === 1) return 'demain'
+  return `dans ${j} j`
+}
+
+// Non traitées d'abord, par date de début croissante ; traitées en fin de liste.
+const triees = computed(() => {
+  const liste = [...demandes.value]
+  if (tri.value === 'recentes') return liste
+  return liste.sort((a, b) => {
+    const ta = a.statut === 'traitee'
+    const tb = b.statut === 'traitee'
+    if (ta !== tb) return ta ? 1 : -1
+    return (a.debut ?? '9999-12-31').localeCompare(b.debut ?? '9999-12-31')
+  })
+})
+
+const nbCritiques = computed(() => demandes.value.filter(d => urgence(d) === 'critique').length)
 
 async function exporter() {
   try {
@@ -38,6 +76,12 @@ async function exporter() {
       </span>
     </header>
 
+    <p v-if="nbCritiques" class="bandeau urgent" role="status">
+      {{ nbCritiques }}
+      {{ nbCritiques > 1 ? 'demandes non traitées démarrent' : 'demande non traitée démarre' }}
+      dans les {{ SEUIL_CRITIQUE }} jours, ou ont déjà commencé.
+    </p>
+
     <div class="filtres">
       <input v-model="filtre.q" type="text" placeholder="Référence, compagnie, contact…"
         aria-label="Rechercher" />
@@ -46,6 +90,10 @@ async function exporter() {
         <option value="nouvelle">Nouvelles</option>
         <option value="en_cours">En cours</option>
         <option value="traitee">Traitées</option>
+      </select>
+      <select v-model="tri" aria-label="Trier">
+        <option value="urgence">Début le plus proche</option>
+        <option value="recentes">Plus récentes</option>
       </select>
       <button class="ajouter court" @click="exporter" :disabled="!demandes.length">Export CSV</button>
     </div>
@@ -63,11 +111,12 @@ async function exporter() {
       <table>
         <thead>
           <tr>
-            <th>Référence</th><th>Compagnie</th><th>Salariés</th><th>Déposée</th><th>Statut</th>
+            <th>Référence</th><th>Compagnie</th><th>Salariés</th>
+            <th>Début</th><th>Déposée</th><th>Statut</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="d in demandes" :key="d.id">
+          <tr v-for="d in triees" :key="d.id" :class="urgence(d) && `ligne-${urgence(d)}`">
             <td>
               <router-link :to="{ name: 'demande', params: { id: d.id } }" class="ref">
                 {{ d.reference }}
@@ -76,6 +125,13 @@ async function exporter() {
             </td>
             <td>{{ d.compagnie }}<br /><span class="sous">{{ d.contact_nom }}</span></td>
             <td class="chiffre">{{ d.nb_salaries }}</td>
+            <td>
+              <span class="chiffre">{{ jour(d.debut) }}</span>
+              <br v-if="d.statut !== 'traitee' && d.debut" />
+              <span v-if="d.statut !== 'traitee' && d.debut" class="delai" :class="urgence(d)">
+                {{ delai(d) }}
+              </span>
+            </td>
             <td class="chiffre">{{ jour(d.created_at) }}</td>
             <td><StatusBadge :statut="d.statut" /></td>
           </tr>
