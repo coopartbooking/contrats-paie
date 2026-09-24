@@ -6,9 +6,11 @@ en remplacement d'un tableur partagé.
 - **Dépôt public** — une compagnie remplit le formulaire depuis un simple lien, sans compte.
   Validation stricte : un dossier incomplet ne peut pas être envoyé. Un lien de relecture,
   valable 45 jours, permet de corriger tant que la demande n'a pas été prise en charge.
-- **Gestion** — liste des demandes, détail, statut, export CSV. Accès réservé aux comptes
-  inscrits dans la table `managers`, authentifiés par Google.
-- **Notifications** — e-mail aux gestionnaires à chaque dépôt et à chaque modification,
+- **Gestion** — liste des demandes triée par urgence, détail, statut, export CSV. Accès
+  réservé aux comptes inscrits dans `managers`, par adresse et mot de passe.
+- **Équipe** — un administrateur ajoute, retire et réinitialise les gestionnaires depuis
+  l'application, sans SQL.
+- **Notifications** — e-mail au service paie à chaque dépôt et à chaque modification,
   confirmation à la compagnie, avis d'effacement des données du dossier paie.
 
 Vue 3 (Composition API) + Supabase. Pas de framework CSS.
@@ -20,7 +22,7 @@ Vue 3 (Composition API) + Supabase. Pas de framework CSS.
 | `submissions` | un dépôt : compagnie, contact, statut, jeton de relecture |
 | `contracts` | un salarié = une ligne : emploi, dates, rémunération, lieu |
 | `employee_details` | éléments transmis au service paie (identité, adresse, NIR, IBAN) — **effacés un mois après le traitement** |
-| `managers` | comptes autorisés à consulter les demandes |
+| `managers` | comptes autorisés ; `admin` donne le droit de gérer les accès |
 | `reglages` | interrupteurs ; `avis_purge_paie` active l'e-mail d'effacement |
 | `notifications` | journal des envois, succès et échecs |
 | `consultations_paie` | journal des accès aux données du dossier paie |
@@ -30,13 +32,23 @@ Le déposant n'a **aucun** droit direct sur ces tables. Tout passe par trois RPC
 les tables via RLS, sauf `employee_details`, accessible seulement par `lire_details_paie()`,
 qui journalise chaque consultation.
 
+Les policies s'appuient sur `private.is_manager()` et `private.is_admin()` : hors du schéma
+`public`, donc hors de l'API, mais exécutables par le rôle `authenticated`.
+
+Les droits de table sont posés explicitement dans `20260924090000_droits_api.sql` : `anon`
+n'a aucun accès aux tables, `authenticated` a la lecture plus la mise à jour du statut,
+`service_role` a tout. **Toute migration qui crée une table doit désormais poser ses propres
+`grant`** : depuis le 30 octobre 2026, Supabase ne les accorde plus automatiquement, et une
+table sans `grant` est injoignable par l'API.
+
 ## Prérequis
 
 - Node 20 ou plus
 - Supabase CLI (`npm i -g supabase` ou `brew install supabase/tap/supabase`)
 - Un projet Supabase en région européenne
-- Un compte chez un service d'envoi d'e-mails (Resend par défaut ; le SMTP intégré de
-  Supabase ne sert qu'aux e-mails d'authentification et ne convient pas ici)
+- Une boîte e-mail dédiée chez un hébergeur fournissant un SMTP (ici OVH,
+  `notifications@coopart.fr`), utilisée pour les notifications **et** pour les e-mails
+  d'authentification
 
 ## Mise en place, dans l'ordre
 
@@ -54,7 +66,8 @@ Dashboard → New project. Région européenne, mot de passe de base **conservé
 gestionnaire de mots de passe** : il n'est affiché qu'une fois. Note la référence du projet
 (la chaîne dans `https://<ref>.supabase.co`).
 
-⚠️ Un projet en plan Free est mis en pause après une semaine sans activité. Acceptable
+⚠️ Un projet en plan Free est mis en pause après une semaine sans activité, n'a aucune
+sauvegarde, et ne propose pas la protection contre les mots de passe compromis. Acceptable
 pendant les tests, pas une fois le lien donné aux compagnies.
 
 ### 3. Lier et pousser le schéma
@@ -79,40 +92,62 @@ select vault.create_secret(
 select vault.create_secret('<secret_aleatoire>', 'notify_secret');
 ```
 
-Tant que ces deux secrets manquent, les dépôts fonctionnent mais aucun e-mail ne part
-(un `warning` est écrit dans les logs).
+Pour le remplacer plus tard : `select vault.update_secret(id, '<nouveau>')` avec l'`id`
+lu dans `vault.secrets`. Tant que ces deux secrets manquent, les dépôts fonctionnent mais
+aucun e-mail ne part (un `warning` est écrit dans les logs).
 
-### 5. La connexion Google
+### 5. La connexion des gestionnaires
 
-1. Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID
-   (type « Web application »).
-2. Authorized redirect URI : `https://<ref>.supabase.co/auth/v1/callback`
-3. Supabase → Authentication → Providers → Google : coller Client ID et Client Secret.
-4. Supabase → Authentication → URL Configuration :
-   - Site URL : l'URL publique de l'application
-   - Redirect URLs : la même, plus `http://localhost:5173` pour le développement
+Connexion par adresse et mot de passe. Aucune inscription libre : un administrateur crée
+les comptes depuis la page Équipe, qui affiche un mot de passe provisoire à transmettre par
+un autre canal que l'e-mail.
 
-Le client Supabase est configuré en **PKCE** : le retour de connexion arrive dans
-`?code=…`, avant le `#`. En flux implicite, le jeton atterrirait dans le fragment et
-écraserait la route.
+**a. Authentication → Sign In / Providers → Email** : provider activé, *Allow new users to
+sign up* **désactivé**, confirmation d'e-mail désactivée (le compte est créé déjà confirmé
+par la fonction `gestionnaires`).
 
-### 6. L'Edge Function
+**b. Authentication → URL Configuration**
+
+- Site URL : l'URL publique de l'application (en développement `http://localhost:5173`)
+- Redirect URLs : la même suivie de `/**`
+
+**c. Authentication → Emails → SMTP Settings** : le mailer intégré de Supabase est bridé à
+quelques envois par heure. Déclare le SMTP de la boîte dédiée (OVH : `ssl0.ovh.net`, port
+465, utilisateur et expéditeur = l'adresse complète). Les gabarits d'e-mails deviennent
+alors modifiables, notamment *Reset password*.
+
+Le client Supabase est en **PKCE**, et `src/lib/pre-auth.js` récupère un éventuel retour
+d'authentification arrivé dans le fragment avant que le router en mode hash ne le perde.
+
+### 6. Les Edge Functions
 
 ```bash
 supabase secrets set \
-  RESEND_API_KEY=... \
-  MAIL_FROM="Service paie <paie@exemple.fr>" \
+  SMTP_HOST=ssl0.ovh.net \
+  SMTP_PORT=465 \
+  SMTP_USER=notifications@exemple.fr \
+  SMTP_PASSWORD='<mot_de_passe_de_la_boite>' \
+  MAIL_FROM="Service paie <notifications@exemple.fr>" \
+  MAIL_REPLY_TO=paie@exemple.fr \
   NOTIFY_SECRET=<le_meme_secret_que_dans_le_vault> \
-  APP_BASE_URL=https://contrats.exemple.fr/ \
-  NOTIFY_FALLBACK=paie@exemple.fr
+  NOTIFY_TO=paie@exemple.fr \
+  NOTIFY_FALLBACK=paie@exemple.fr \
+  APP_BASE_URL=https://contrats.exemple.fr/
 
 supabase functions deploy notify-depot
+supabase functions deploy gestionnaires
 ```
 
-`verify_jwt = false` est déjà dans `supabase/config.toml` : l'appelant est un trigger de
-base, pas un utilisateur connecté, et la fonction vérifie elle-même le secret.
+- `MAIL_FROM` doit porter l'adresse du compte SMTP authentifié, sinon OVH refuse l'envoi.
+- `NOTIFY_TO` fixe les destinataires des alertes. Sans lui, les adresses de `managers` sont
+  utilisées, et `NOTIFY_FALLBACK` tant que la table est vide.
+- `notify-depot` tourne avec `verify_jwt = false` : l'appelant est un trigger de base, pas un
+  utilisateur connecté, et la fonction vérifie elle-même `NOTIFY_SECRET`.
+- `gestionnaires` tourne avec `verify_jwt = true` et revérifie que l'appelant est
+  administrateur avant toute création ou suppression de compte.
 
-`NOTIFY_FALLBACK` sert tant que `managers` est vide.
+Le mot de passe SMTP et la clé `service_role` ne doivent jamais entrer dans le dépôt ni dans
+`.env` : ils vivent dans les secrets Supabase.
 
 ### 7. Le front
 
@@ -122,45 +157,69 @@ cp .env.example .env
 npm run build
 ```
 
-Le contenu de `dist/` se déploie n'importe où : Vercel, Netlify, un NAS. Le router est en
-mode hash, donc **aucune règle de rewrite n'est nécessaire**.
+Le router est en mode hash : **aucune règle de rewrite n'est nécessaire**, et le jeton de
+relecture reste dans le fragment, donc hors des journaux serveur.
 
-### 8. Le premier gestionnaire
+Déploiement sur GitHub Pages par `.github/workflows/deploy.yml`, à chaque push sur `main` :
 
-Connecte-toi une fois sur `…/#/gestion` avec Google. Tu verras « compte non autorisé » :
-c'est normal, le compte existe désormais dans `auth.users` mais pas dans `managers`.
-Dans le SQL Editor :
+- Settings → Pages → Source : **GitHub Actions**
+- Settings → Secrets and variables → Actions → **Variables** : `VITE_SUPABASE_URL` et
+  `VITE_SUPABASE_PUBLISHABLE_KEY` (des Variables, pas des Secrets : elles sont publiques par
+  nature et doivent apparaître dans le build)
+- `vite.config.js` fixe `base: '/contrats-paie/'` en build : à changer en `'/'` avec un
+  domaine dédié
+
+### 8. Le premier administrateur
+
+Authentication → Users → **Add user**, avec ton adresse et un mot de passe, *Auto Confirm
+User* coché. Puis dans le SQL Editor :
 
 ```sql
-insert into managers (user_id, email)
-select id, email from auth.users where email = 'toi@exemple.fr';
+insert into managers (user_id, email, admin)
+select id, email, true from auth.users where email = 'toi@exemple.fr';
 ```
 
-Recharge la page. Pour ajouter un collègue ensuite, même requête après sa première
-tentative de connexion.
+Connecte-toi sur `…/#/gestion`. Les comptes suivants s'ajoutent depuis la page Équipe.
 
 ## Vérifications avant ouverture aux compagnies
 
 1. Déposer une demande de test avec un salarié artiste et un technicien.
-2. Vérifier les deux e-mails (gestionnaires + confirmation compagnie) et
+2. Vérifier les deux e-mails (alerte service paie + confirmation compagnie) et
    `select * from notifications order by created_at desc;`.
-3. Ouvrir le lien de relecture, modifier un champ, enregistrer : un e-mail de révision
-   doit partir et `revision` passer à 1.
-4. Vérifier que le NIR et l'IBAN n'apparaissent **pas** en clair dans la page de relecture.
-5. Dans la gestion : afficher les éléments du dossier paie, puis
+3. Vérifier la délivrabilité : dans Gmail, « Afficher l'original » doit donner SPF, DKIM et
+   DMARC en `pass`. Sinon, compléter la zone DNS du domaine.
+4. Répondre à la confirmation : la réponse doit arriver dans la boîte `MAIL_REPLY_TO`.
+5. Ouvrir le lien de relecture, modifier un champ, enregistrer : un e-mail de révision doit
+   partir et `revision` passer à 1.
+6. Vérifier que le NIR et l'IBAN n'apparaissent **pas** en clair dans la page de relecture.
+7. Dans la gestion : afficher les éléments du dossier paie, puis
    `select * from consultations_paie;` — la consultation doit être tracée.
-6. Tester l'export CSV : ouverture directe dans Excel, aucune colonne du dossier paie.
-7. Passer la demande en « traitée », puis forcer la purge :
-   `select purger_donnees_paie();` après avoir avancé `traitee_at` d'un mois sur la
-   demande de test. L'avis d'effacement doit partir.
-8. Dashboard → Advisors : aucune alerte de sécurité.
-9. Supprimer la demande de test : `delete from submissions where reference = '…';`
+8. Tester l'export CSV : ouverture directe dans Excel, aucune colonne du dossier paie.
+9. Ajouter puis retirer un gestionnaire de test depuis la page Équipe.
+10. Passer la demande en « traitée », puis forcer la purge :
+    `select purger_donnees_paie();` après avoir avancé `traitee_at` d'un mois sur la
+    demande de test. L'avis d'effacement doit partir.
+11. Dashboard → Advisors : voir ci-dessous les alertes attendues.
+12. Supprimer les demandes de test : `delete from submissions where reference = '…';`
+
+### Alertes Advisors attendues
+
+Huit avertissements restent, tous assumés :
+
+- `submit_depot`, `get_depot`, `update_depot` exposés à `anon` et `authenticated` : c'est le
+  dépôt sans compte. Les fonctions valident tout ce qu'elles reçoivent et le jeton de
+  relecture est la seule clé d'accès à une demande.
+- `lire_details_paie` exposée à `authenticated` : la fonction vérifie elle-même
+  `private.is_manager()` et journalise la consultation.
+- Protection contre les mots de passe compromis désactivée : réservée au plan Pro.
 
 ## Points de vigilance
 
 - **La confirmation envoyée à la compagnie contient le lien de relecture**, donc un accès
   complet à la demande. C'est le prix du dépôt sans compte, et la raison pour laquelle NIR
   et IBAN ne sont jamais renvoyés en clair.
+- **Chaque nouvelle table doit emporter ses `grant`** dans la migration qui la crée, sinon
+  elle reste injoignable par l'API.
 - **`pg_net` ne réessaie pas** en cas d'échec HTTP et n'avertit personne : la table
   `notifications` est la seule trace exploitable.
 - **`submit_depot` est appelable anonymement.** Si le lien fuite hors du cercle des
@@ -170,6 +229,8 @@ tentative de connexion.
   dans `20260918090600_purge.sql`.
 - **Pas de pagination** dans la liste des demandes. Au-delà de deux ou trois cents dépôts,
   ajouter un `range()`.
+- **Pas de rafraîchissement automatique** de la liste : deux gestionnaires simultanés ne
+  voient les changements de l'autre qu'après rechargement.
 
 ## Développement
 
@@ -190,10 +251,15 @@ rejouer toutes les migrations.
 
 ```bash
 createdb test
+psql -d test -c "create role anon nologin; create role authenticated nologin;
+                 create role service_role nologin bypassrls;
+                 grant usage on schema public to anon, authenticated, service_role;"
 psql -d test -f supabase/tests/stub_local.sql
-for f in supabase/migrations/2026*_{types,tables,rls,rpc,triggers,purge}.sql; do psql -d test -f "$f"; done
+for f in supabase/migrations/2026*.sql; do
+  case "$f" in *extensions.sql) continue;; esac
+  psql -d test -v ON_ERROR_STOP=1 -f "$f"
+done
 psql -d test -f supabase/tests/smoke.sql
 ```
 
-La migration `_extensions.sql` est à sauter en local (pas de `pg_net` ni de `pg_cron`), et
-les rôles `anon`, `authenticated` et `service_role` doivent exister.
+La migration `_extensions.sql` est à sauter en local : ni `pg_net` ni `pg_cron` n'y sont.
